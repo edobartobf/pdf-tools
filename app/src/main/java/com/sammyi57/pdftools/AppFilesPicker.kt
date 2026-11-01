@@ -141,8 +141,20 @@ fun AppFilesPicker(multi: Boolean, already: List<String>, onClose: () -> Unit, o
           Spinner(c.accent, modifier = Modifier.padding(top = 40.dp).align(Alignment.CenterHorizontally))
           return@Column
         }
+        // Anything else on the phone (Downloads, other apps' files) through the system picker, from this same sheet.
+        if (!onDrive && needle.isEmpty() && folder == null) Group {
+          ListRow(
+            "Browse phone storage", first = true, lead = { Lead(I.cellphone) }, subtitle = "Downloads, documents and other folders", chevron = true,
+            onClick = {
+              scope.launch {
+                val got = pickPdfs(multi)
+                if (got.isNotEmpty()) finish(if (multi) selected.values.toList() + got else got) // ticked saved files come along
+              }
+            },
+          )
+        }
         if (needle.isEmpty() && folder == null && folders.isNotEmpty()) {
-          GroupLabel("Folders", first = true)
+          GroupLabel("Folders", first = onDrive)
           Group {
             folders.forEachIndexed { i, (name, n) ->
               ListRow(name, first = i == 0, lead = { FolderGlyph(32.dp) }, subtitle = plural(n, "PDF"), chevron = true, onClick = { folder = name })

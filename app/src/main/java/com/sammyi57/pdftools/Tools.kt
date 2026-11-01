@@ -262,7 +262,7 @@ val TOOLS: List<Tool> = listOf(
     "ocr", 4, "OCR Scanned PDF",
     "Read the text in a scanned PDF and lay it invisibly over the pages, so it can be searched, selected and copied. Runs on your phone.",
     "Make searchable", "Reading every page", Input.Pdf,
-    run = one("searchable") { b, _ -> ocrPdf(b) ?: fail("No text found. This PDF may already be searchable, or be too blurry to read.") },
+    run = one("searchable") { b, _ -> ocrPdf(b) },
   ),
   Tool(
     "unlock", 4, "Remove Password", "Save a copy of a locked PDF that opens without its password and has no restrictions.",

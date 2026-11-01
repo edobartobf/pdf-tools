@@ -25,6 +25,7 @@ import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import com.tom_roush.pdfbox.pdmodel.encryption.StandardProtectionPolicy
 import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
+import com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import com.tom_roush.pdfbox.pdmodel.graphics.state.RenderingMode
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -372,22 +373,42 @@ fun pdfToDocx(path: String): File {
   return out
 }
 
+// Characters a reader could search for: letters and digits, not the private-use glyph codes a font with no Unicode map
+// hands back (those look like text to PdfBox but copy as boxes).
+private fun realChars(text: String) = text.count { it.isLetterOrDigit() && it.code !in 0xE000..0xF8FF }
+
+// Whether a page carries a picture big enough to be a scan of it (a logo or a photo in a letter is far smaller).
+private fun hasScanImage(res: PDResources?, depth: Int = 0): Boolean = res != null && res.xObjectNames.any { name ->
+  when (val x = runCatching { res.getXObject(name) }.getOrNull()) {
+    is PDImageXObject -> x.width >= 600 && x.height >= 600 && x.width.toLong() * x.height >= 600_000L
+    is PDFormXObject -> depth < 2 && hasScanImage(x.resources, depth + 1)
+    else -> false
+  }
+}
+
 /**
  * Makes a scanned PDF searchable: every page that has no real text is rendered, read by ML Kit, and given an invisible
- * text layer over the words, so find, select and copy work while the page looks the same. Null when nothing was read.
+ * text layer over the words, so find, select and copy work while the page looks the same. Fails with a message saying
+ * why when nothing was added: every page already had text, or nothing on the pages could be read.
  */
-fun ocrPdf(bytes: ByteArray): ByteArray? {
+fun ocrPdf(bytes: ByteArray): ByteArray {
   val tmp = File(appContext.cacheDir, "ocr-${System.currentTimeMillis()}.pdf").apply { writeBytes(bytes) }
   val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
   try {
     PDDocument.load(tmp).use { doc ->
       val stripper = PDFTextStripper()
       var added = 0
+      var searchable = 0
+      var count = 0
       renderer(tmp.path).use { r ->
-        for (i in 0 until minOf(doc.numberOfPages, r.pageCount)) {
+        count = minOf(doc.numberOfPages, r.pageCount)
+        for (i in 0 until count) {
           stripper.startPage = i + 1
           stripper.endPage = i + 1
-          if (stripper.getText(doc).trim().length >= 50) continue // already searchable
+          // Already searchable: real text on the page. A scan with only a stamp or footer as text ("Scanned with…",
+          // a page number) still needs reading, so a page that is mostly a picture needs a lot more before it counts.
+          val chars = realChars(stripper.getText(doc))
+          if (chars >= (if (hasScanImage(doc.getPage(i).resources)) 300 else 50)) { searchable++; continue }
           // Boxes come back as fractions of the page, so the render resolution never reaches the text layer.
           val lines = r.openPage(i).use { p ->
             val bw = minOf(p.width * 3, 3000) // ~216 dpi: enough for ML Kit to read small print
@@ -433,7 +454,9 @@ fun ocrPdf(bytes: ByteArray): ByteArray? {
           }
         }
       }
-      return if (added == 0) null else doc.bytes()
+      if (added > 0) return doc.bytes()
+      if (count > 0 && searchable == count) fail("This PDF already has text on every page. Open it in the viewer and hold a word to select and copy it.")
+      fail("No text could be read on the pages. They may be blank, handwritten, or too blurry or small to read.")
     }
   } finally {
     recognizer.close()
